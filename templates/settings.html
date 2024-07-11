@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+
+{% block title %}Chatbot Settings - {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Settings for {{ chatbot.name }}</h1>
+<p>Chatbot Type: {{ chatbot.chatbot_type_id }}</p>
+
+<div id="settings-container">
+    <h2>General Settings</h2>
+    <div id="general-settings"></div>
+
+    <h2>Type-Specific Settings</h2>
+    <div id="type-specific-settings"></div>
+</div>
+
+<button id="save-settings">Save All Settings</button>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    fetchSettings();
+    document.getElementById('save-settings').addEventListener('click', saveAllSettings);
+});
+
+function fetchSettings() {
+    fetch(`/api/chatbot/${chatbotId}/settings`)
+        .then(response => response.json())
+        .then(data => {
+            displaySettings('general-settings', data.general);
+            displaySettings('type-specific-settings', data.type_specific);
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+function displaySettings(containerId, settings) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    
+    for (const [key, value] of Object.entries(settings)) {
+        const div = document.createElement('div');
+        div.className = 'setting-item';
+        
+        const label = document.createElement('label');
+        label.textContent = key;
+        label.htmlFor = key;
+        
+        const input = document.createElement('input');
+        input.type = typeof value === 'number' ? 'number' : 'text';
+        input.id = key;
+        input.name = key;
+        input.value = value;
+        
+        div.appendChild(label);
+        div.appendChild(input);
+        container.appendChild(div);
+    }
+}
+
+function saveAllSettings() {
+    const generalSettings = getSettingsFromContainer('general-settings');
+    const typeSpecificSettings = getSettingsFromContainer('type-specific-settings');
+    
+    const settings = {
+        general: generalSettings,
+        type_specific: typeSpecificSettings
+    };
+    
+    fetch(`/api/chatbot/${chatbotId}/settings`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings),
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert('Settings saved successfully');
+        fetchSettings();  // Refresh the displayed settings
+    })
+    .catch((error) => {
+        console.error('Error:', error);
+        alert('Failed to save settings');
+    });
+}
+
+function getSettingsFromContainer(containerId) {
+    const container = document.getElementById(containerId);
+    const inputs = container.querySelectorAll('input');
+    const settings = {};
+    
+    inputs.forEach(input => {
+        let value = input.value;
+        if (input.type === 'number') {
+            value = parseFloat(value);
+        }
+        settings[input.name] = value;
+    });
+    
+    return settings;
+}
+</script>
+{% endblock %}

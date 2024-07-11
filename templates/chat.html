@@ -1,0 +1,153 @@
+{% extends "base.html" %}
+
+{% block title %}Chat with {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Chat with {{ chatbot.name }}</h1>
+
+<div id="chat-container">
+    <div id="chat-messages"></div>
+    <form id="chat-form">
+        <input type="text" id="user-input" placeholder="Type your message here..." required>
+        <button type="submit">Send</button>
+    </form>
+    <button id="new-thread-btn">New Thread</button>
+</div>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+    let threadId = localStorage.getItem(`threadId_${chatbotId}`);
+
+    document.addEventListener('DOMContentLoaded', function() {
+        const form = document.getElementById('chat-form');
+        form.addEventListener('submit', sendMessage);
+        
+        const newThreadBtn = document.getElementById('new-thread-btn');
+        newThreadBtn.addEventListener('click', startNewThread);
+        
+        if (!threadId) {
+            createNewThread();
+        } else {
+            loadMessages();
+        }
+    });
+
+    function createNewThread() {
+        fetch(`/api/chatbot/${chatbotId}/thread`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            threadId = data.id;
+            localStorage.setItem(`threadId_${chatbotId}`, threadId);
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function startNewThread() {
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML = '';
+        createNewThread();
+    }
+
+    function loadMessages() {
+        fetch(`/api/chatbot/${chatbotId}/thread/${threadId}/messages`)
+        .then(response => response.json())
+        .then(messages => {
+            const chatMessages = document.getElementById('chat-messages');
+            chatMessages.innerHTML = '';
+            messages.forEach(message => {
+                displayMessage(message.role, message.contents[0].content);
+            });
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function sendMessage(e) {
+        e.preventDefault();
+        const userInput = document.getElementById('user-input');
+        const message = userInput.value;
+        userInput.value = '';
+
+        if (!threadId) {
+            alert('Thread not created yet. Please try again in a moment.');
+            return;
+        }
+
+        displayMessage('user', message);
+
+        fetch(`/api/chatbot/${chatbotId}/chat`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ thread_id: threadId, content: message }),
+        })
+        .then(response => response.json())
+        .then(data => {
+            displayMessage('bot', data.contents[0].content);
+        })
+        .catch(error => console.error('Error:', error));
+    }
+
+    function displayMessage(sender, message) {
+        const chatMessages = document.getElementById('chat-messages');
+        const messageElement = document.createElement('div');
+        messageElement.className = `message ${sender}-message`;
+        messageElement.textContent = message;
+        chatMessages.appendChild(messageElement);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    #chat-container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+    }
+    #chat-messages {
+        height: 400px;
+        overflow-y: auto;
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #eee;
+    }
+    .message {
+        margin-bottom: 10px;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .user-message {
+        background-color: #e6f2ff;
+        text-align: right;
+    }
+    .bot-message {
+        background-color: #f0f0f0;
+    }
+    #chat-form {
+        display: flex;
+        margin-bottom: 10px;
+    }
+    #user-input {
+        flex-grow: 1;
+        margin-right: 10px;
+    }
+    #new-thread-btn {
+        width: 100%;
+        padding: 10px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}

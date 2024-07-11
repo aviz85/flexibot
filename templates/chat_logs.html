@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+
+{% block title %}Chat Logs - {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Chat Logs for {{ chatbot.name }}</h1>
+
+<div id="chat-logs-container">
+    <!-- Logs will be populated here -->
+</div>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+
+    document.addEventListener('DOMContentLoaded', function() {
+        fetchChatLogs();
+    });
+
+    function fetchChatLogs() {
+        fetch(`/api/chatbot/${chatbotId}/logs`)
+            .then(response => response.json())
+            .then(logs => {
+                const container = document.getElementById('chat-logs-container');
+                container.innerHTML = '';
+                logs.forEach((thread, index) => {
+                    const threadElement = document.createElement('div');
+                    threadElement.className = 'chat-thread';
+                    threadElement.innerHTML = `
+                        <h3>Thread ${index + 1} - ${new Date(thread.created_at).toLocaleString()}</h3>
+                        <div class="thread-messages">
+                            ${thread.messages.map(message => `
+                                <div class="message ${message.role}-message">
+                                    <span class="message-time">${new Date(message.created_at).toLocaleTimeString()}</span>
+                                    <span class="message-content">${message.contents[0].content}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    container.appendChild(threadElement);
+                });
+            })
+            .catch(error => console.error('Error:', error));
+    }
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chat-thread {
+        margin-bottom: 30px;
+        border: 1px solid #ccc;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .thread-messages {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    .message {
+        margin-bottom: 10px;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .user-message {
+        background-color: #e6f2ff;
+        text-align: right;
+    }
+    .bot-message {
+        background-color: #f0f0f0;
+    }
+    .message-time {
+        font-size: 0.8em;
+        color: #888;
+    }
+    .message-content {
+        display: block;
+        margin-top: 5px;
+    }
+</style>
+{% endblock %}

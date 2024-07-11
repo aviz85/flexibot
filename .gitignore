@@ -1,0 +1,10 @@
+.env
+venv/
+tests/
+data/
+
+# Ignore __pycache__ directories
+**/__pycache__/
+
+# Ignore .DS_Store files
+**/.DS_Store

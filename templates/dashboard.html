@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+
+{% block title %}FlexiBot Dashboard{% endblock %}
+
+{% block content %}
+<h1>FlexiBot Dashboard</h1>
+
+<section id="chatbot-list">
+    <h2>Your Chatbots</h2>
+    <ul>
+    {% for chatbot in chatbots %}
+        <li>
+            <h3>{{ chatbot.name }}</h3>
+            <p>Type: {{ chatbot.chatbot_type_id }}</p>
+<a href="{{ url_for('chatbot_settings', id=chatbot.id) }}">Settings</a> |
+<a href="{{ url_for('chatbot_chat', id=chatbot.id) }}">Chat</a> |
+<a href="{{ url_for('chatbot_logs', id=chatbot.id) }}">Chat Logs</a>
+    {% else %}
+        <li>No chatbots available. Create one to get started!</li>
+    {% endfor %}
+    </ul>
+</section>
+
+<section id="create-chatbot">
+    <h2>Create New Chatbot</h2>
+    <form id="create-chatbot-form">
+        <label for="chatbot-name">Name:</label>
+        <input type="text" id="chatbot-name" name="name" required>
+
+        <label for="chatbot-type">Type:</label>
+        <select id="chatbot-type" name="chatbot_type_id" required>
+            <option value="text">Text Chatbot</option>
+            <!-- Add more options as you implement more chatbot types -->
+        </select>
+
+        <button type="submit">Create Chatbot</button>
+    </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
