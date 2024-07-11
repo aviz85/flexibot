@@ -4,7 +4,7 @@
 
 {% block content %}
 <h1>Settings for {{ chatbot.name }}</h1>
-<p>Chatbot Type: {{ chatbot.chatbot_type_id }}</p>
+<p>Chatbot Type: {{ chatbot.__class__.__name__ }}</p>
 
 <div id="settings-container">
     <h2>General Settings</h2>
@@ -18,6 +18,7 @@
 
 <script>
     const chatbotId = "{{ chatbot.id }}";
+    const chatbotType = "{{ chatbot.__class__.__name__ }}";
 </script>
 {% endblock %}
 

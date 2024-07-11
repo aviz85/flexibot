@@ -1,7 +1,8 @@
+# File: routes/api/chat.py
+
 from flask import Blueprint, jsonify, request, current_app
 from models.message import Message, Content
 from models.thread import Thread
-from utils.chatbot_type_factory import chatbot_type_factory
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -32,14 +33,7 @@ def chat(chatbot_id):
         )
         current_app.storage.save_message(user_message)
         
-        chatbot_type = chatbot_type_factory.get(chatbot.chatbot_type_id)
-        if not chatbot_type:
-            return jsonify({'error': 'Invalid chatbot type'}), 400
-        
-        # Apply chatbot settings before processing the message
-        chatbot_type.apply_settings(chatbot)
-        
-        response_message = chatbot_type.chat(chatbot, user_message, thread)
+        response_message = chatbot.chat(user_message, thread)
         current_app.storage.save_message(response_message)
         
         return jsonify(response_message.to_dict())
@@ -54,7 +48,7 @@ def get_thread_messages(thread_id):
         if not thread:
             return jsonify({'error': 'Invalid thread ID'}), 404
         
-        messages = current_app.storage.get_messages_for_thread(thread_id)
+        messages = current_app.storage.get_messages(query={"thread_id": thread_id})
         return jsonify([message.to_dict() for message in messages])
     except Exception as e:
         current_app.logger.error(f"Error retrieving thread messages: {str(e)}")

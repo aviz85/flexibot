@@ -1,0 +1,1838 @@
+
+
+# File: config.py
+
+# File: config.py
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    # Flask settings
+    SECRET_KEY = os.getenv('SECRET_KEY', 'your-secret-key')
+    DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+    # Application settings
+    APP_NAME = 'FlexiBot'
+    
+    # Database settings (if applicable)
+    DATABASE_URI = os.getenv('DATABASE_URI', 'sqlite:///flexibot.db')
+
+    # Storage settings
+    STORAGE_TYPE = os.getenv('STORAGE_TYPE', 'json')  # 'json' or 'memory'
+    JSON_STORAGE_PATH = os.getenv('JSON_STORAGE_PATH', 'data')
+
+    # Chatbot settings
+    DEFAULT_CHATBOT_TYPE = os.getenv('DEFAULT_CHATBOT_TYPE', 'TextChatbot')
+    MAX_CONVERSATION_HISTORY = int(os.getenv('MAX_CONVERSATION_HISTORY', 50))
+
+    # API keys (if applicable)
+    ANTHROPIC_API_KEY = os.getenv('ANTHROPIC_API_KEY')
+
+    @staticmethod
+    def init_app(app):
+        pass
+
+# File: concat.py
+
+import os
+
+def load_gitignore(gitignore_path):
+    ignored_paths = set()
+    if os.path.isfile(gitignore_path):
+        with open(gitignore_path, 'r') as gitignore:
+            for line in gitignore:
+                line = line.strip()
+                if line and not line.startswith('#'):
+                    ignored_paths.add(line)
+    return ignored_paths
+
+def is_ignored(path, ignored_paths):
+    for pattern in ignored_paths:
+        if pattern.startswith('/'):
+            pattern = pattern[1:]
+        if pattern.endswith('/'):
+            pattern = pattern[:-1]
+        if pattern in path:
+            return True
+    return False
+
+def concatenate_codebase_with_comments(src_directory, output_file, extensions, gitignore_path):
+    ignored_paths = load_gitignore(gitignore_path)
+    with open(output_file, 'w', encoding='utf-8') as outfile:
+        for subdir, _, files in os.walk(src_directory):
+            for file in files:
+                file_path = os.path.relpath(os.path.join(subdir, file), src_directory)
+                if any(file.endswith(ext) for ext in extensions) and not is_ignored(file_path, ignored_paths):
+                    full_file_path = os.path.join(src_directory, file_path)
+                    with open(full_file_path, 'r', encoding='utf-8') as infile:
+                        outfile.write(f"\n\n# File: {file_path}\n\n")
+                        outfile.write(infile.read())
+
+src_directory = '/Users/aviz/flexibot'  # Replace with your codebase directory
+output_file = 'all_code.txt'  # Replace with your desired output file path
+extensions = ['.py', '.js', '.html', '.css']  # Add more extensions if needed
+
+concatenate_codebase_with_comments(src_directory, output_file, extensions, '.gitignore')
+
+# File: app.py
+
+# File: app.py
+
+from flask import Flask, render_template
+from routes.api.chatbot import chatbot_bp
+from routes.api.chat import chat_bp
+from utils.chatbot_type_factory import chatbot_factory
+from chatbot_types.text_chatbot import TextChatbot
+from chatbot_types.claude.claude_chatbot import ClaudeChatbot
+from storage.json_file_storage import JSONFileStorage
+import config
+from dotenv import load_dotenv
+import os
+
+# Load environment variables from .env file
+load_dotenv()
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_object(config.Config)
+
+    # Register blueprints
+    app.register_blueprint(chatbot_bp, url_prefix='/api/chatbot')
+    app.register_blueprint(chat_bp, url_prefix='/api/chat')
+    
+    # Initialize storage
+    app.storage = JSONFileStorage()
+    
+    # Register chatbot types
+    chatbot_factory.register(TextChatbot)
+    chatbot_factory.register(ClaudeChatbot)
+    
+    @app.route('/')
+    def dashboard():
+        chatbots = app.storage.get_chatbots()
+        return render_template('dashboard.html', chatbots=chatbots)
+
+    @app.route('/chatbot/<id>/settings')
+    def chatbot_settings(id):
+        chatbot = app.storage.get_chatbot(id)
+        if not chatbot:
+            return render_template('error.html', message="Chatbot not found"), 404
+        
+        return render_template('settings.html', chatbot=chatbot)
+    
+    @app.route('/chatbot/<id>/chat')
+    def chatbot_chat(id):
+        chatbot = app.storage.get_chatbot(id)
+        if not chatbot:
+            return render_template('error.html', message="Chatbot not found"), 404
+        return render_template('chat.html', chatbot=chatbot)
+
+    @app.route('/chatbot/<id>/logs')
+    def chatbot_logs(id):
+        chatbot = app.storage.get_chatbot(id)
+        if not chatbot:
+            return render_template('error.html', message="Chatbot not found"), 404
+        
+        threads = app.storage.get_threads(query={"chatbot_id": id})
+        return render_template('chat_logs.html', chatbot=chatbot, threads=threads)
+
+    return app
+
+if __name__ == '__main__':
+    app = create_app()
+    app.run(debug=True, port="5002")
+
+# File: chatbot_types/text_chatbot.py
+
+# File: chatbot_types/text_chatbot.py
+
+from .base import BaseChatbot
+from models.message import Message, Content
+from models.thread import Thread
+from typing import Dict, Any
+
+class TextChatbot(BaseChatbot):
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
+
+    def chat(self, message: Message, thread: Thread) -> Message:
+        # Simple echo implementation
+        response_text = f"Echo: {message.contents[0].content}"
+        return Message(
+            thread_id=thread.id,
+            role="assistant",
+            contents=[Content(type="text", content=response_text)]
+        )
+
+    @staticmethod
+    def get_default_settings() -> Dict[str, Any]:
+        return {
+            "max_response_length": 1000,
+            "response_prefix": "Bot: "
+        }
+
+    @staticmethod
+    def validate_settings(settings: Dict[str, Any]) -> bool:
+        return (
+            isinstance(settings.get("max_response_length"), int) and
+            isinstance(settings.get("response_prefix"), str)
+        )
+
+# File: chatbot_types/__init__.py
+
+
+import os
+import importlib
+
+def load_chatbot_types():
+    chatbot_types = {}
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    
+    for item in os.listdir(current_dir):
+        if os.path.isdir(os.path.join(current_dir, item)) and not item.startswith('__'):
+            try:
+                # Import the module
+                module = importlib.import_module(f'chatbot_types.{item}.{item}_chatbot')
+
+                # Convert item to PascalCase for class name
+                chatbot_class = f'{item.capitalize()}Chatbot'
+                chatbot_types[item] = chatbot_class
+            except (ImportError, AttributeError) as e:
+                print(f"Error loading chatbot type {item}: {str(e)}")
+    
+    return chatbot_types
+
+CHATBOT_TYPES = load_chatbot_types()
+
+
+# File: chatbot_types/base.py
+
+# File: chatbot_types/base.py
+
+from abc import ABC
+from datetime import datetime
+from typing import Dict, Any, Optional, List
+from models.message import Message
+from models.thread import Thread
+from models.settings import Settings
+from uuid import uuid4
+
+class BaseChatbot(ABC):
+    def __init__(self, name: str, id: Optional[str] = None,
+                 settings: Optional[Settings] = None, 
+                 created_at: Optional[datetime] = None):
+        self.id = id or str(uuid4())
+        self.name = name
+        self.settings = settings or Settings()
+        self.created_at = created_at or datetime.utcnow()
+
+    def chat(self, message: Message, thread: Thread) -> Message:
+        # Default implementation
+        return Message(
+            thread_id=thread.id,
+            role="assistant",
+            contents=[Content(type="text", content="This is a default response.")]
+        )
+
+    @staticmethod
+    def get_default_settings() -> Dict[str, Any]:
+        # Default implementation
+        return {
+            "response_length": 100,
+            "language": "en"
+        }
+
+    @staticmethod
+    def validate_settings(settings: Dict[str, Any]) -> bool:
+        # Default implementation
+        return (
+            isinstance(settings.get("response_length"), int) and
+            isinstance(settings.get("language"), str)
+        )
+
+    def apply_settings(self) -> None:
+        type_specific_settings = self.get_default_settings()
+        type_specific_settings.update(self.settings.to_dict().get("type_specific", {}))
+        if self.validate_settings(type_specific_settings):
+            self.settings.update(type_specific=type_specific_settings)
+        else:
+            raise ValueError("Invalid type-specific settings")
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "settings": self.settings.to_dict(),
+            "created_at": self.created_at.isoformat()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'BaseChatbot':
+        settings = Settings.from_dict(data.get("settings", {}))
+        return cls(
+            name=data["name"],
+            id=data["id"],
+            settings=settings,
+            created_at=datetime.fromisoformat(data["created_at"])
+        )
+
+# File: chatbot_types/conversational_chatbot.py
+
+# File: chatbot_types/conversational_chatbot.py
+
+from .base import BaseChatbot
+from abc import abstractmethod
+from typing import List, Dict, Any
+from models.message import Message
+from models.thread import Thread
+
+class ConversationalChatbot(BaseChatbot):
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
+
+    @abstractmethod
+    def process_conversation(self, input_text: str, conversation_history: List[Dict[str, str]]) -> str:
+        pass
+
+    def chat(self, message: Message, thread: Thread) -> Message:
+        conversation_history = self._get_conversation_history(thread)
+        response_text = self.process_conversation(message.contents[0].content, conversation_history)
+        
+        return Message(
+            thread_id=thread.id,
+            role="assistant",
+            contents=[{"type": "text", "content": response_text}]
+        )
+
+    def _get_conversation_history(self, thread: Thread) -> List[Dict[str, str]]:
+        # This method should be implemented to retrieve and format the conversation history
+        # from the storage based on the thread
+        # For now, we'll return an empty list as a placeholder
+        return []
+
+    @staticmethod
+    def get_default_settings() -> Dict[str, Any]:
+        return {
+            "max_history_length": 10,
+            "response_length": 100
+        }
+
+    @staticmethod
+    def validate_settings(settings: Dict[str, Any]) -> bool:
+        return (
+            isinstance(settings.get("max_history_length"), int) and
+            isinstance(settings.get("response_length"), int) and
+            settings.get("max_history_length", 0) > 0 and
+            settings.get("response_length", 0) > 0
+        )
+
+# File: chatbot_types/claude/claude_chatbot.py
+
+# File: chatbot_types/claude/claude_chatbot.py
+
+from ..conversational_chatbot import ConversationalChatbot
+from typing import List, Dict, Any
+from models.message import Message, Content
+from models.thread import Thread
+from .anthropic_api_client import AnthropicAPIClient
+
+class ClaudeChatbot(ConversationalChatbot):
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
+        self.anthropic_client = AnthropicAPIClient()
+
+    def chat(self, message: Message, thread: Thread) -> Message:
+        conversation_history = self._get_conversation_history(thread)
+        response_text = self.process_conversation(message.contents[0].content, conversation_history)
+        
+        return Message(
+            thread_id=thread.id,
+            role="assistant",
+            contents=[Content(type="text", content=response_text)]
+        )
+
+    def process_conversation(self, input_text: str, conversation_history: List[Dict[str, str]]) -> str:
+        messages = conversation_history + [{"role": "user", "content": input_text}]
+
+        response = self.anthropic_client.create_message(
+            model=self.settings.get("model", "claude-3-sonnet-20240229"),
+            max_tokens=self.settings.get("max_tokens", 1000),
+            messages=messages,
+            system=self.settings.get("system_prompt")
+        )
+
+        return response.content[0].text
+
+    def _get_conversation_history(self, thread: Thread) -> List[Dict[str, str]]:
+        # This method should be implemented to retrieve and format the conversation history
+        # from the storage based on the thread
+        # For now, we'll return an empty list as a placeholder
+        # In a real implementation, you would fetch messages from the storage and format them
+        return []
+
+    @staticmethod
+    def get_default_settings() -> Dict[str, Any]:
+        default_settings = ConversationalChatbot.get_default_settings()
+        default_settings.update({
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "system_prompt": "You are a helpful AI assistant."
+        })
+        return default_settings
+
+    @staticmethod
+    def validate_settings(settings: Dict[str, Any]) -> bool:
+        base_valid = ConversationalChatbot.validate_settings(settings)
+        claude_valid = (
+            isinstance(settings.get("model"), str) and
+            isinstance(settings.get("max_tokens"), int) and
+            isinstance(settings.get("temperature"), (int, float)) and
+            0 <= settings.get("temperature", 0) <= 1 and
+            isinstance(settings.get("system_prompt"), str)
+        )
+        return base_valid and claude_valid
+
+    def apply_settings(self) -> None:
+        super().apply_settings()
+        # You might want to update the AnthropicAPIClient with new settings here
+        # For example, updating the API key if it's in the settings
+        api_key = self.settings.get("api_key")
+        if api_key:
+            self.anthropic_client.update_api_key(api_key)
+
+    def to_dict(self) -> Dict[str, Any]:
+        data = super().to_dict()
+        data['type'] = 'claudechatbot'  # Add a type identifier
+        return data
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ClaudeChatbot':
+        chatbot = super().from_dict(data)
+        # If there's any Claude-specific data to restore, do it here
+        return chatbot
+
+# File: chatbot_types/claude/anthropic_api_client.py
+
+# File: bots/claude/anthropic_api_client.py
+
+import os
+import requests
+
+class AnthropicAPIClient:
+    def __init__(self):
+        self.api_key = os.getenv('ANTHROPIC_API_KEY')
+        if not self.api_key:
+            raise ValueError("ANTHROPIC_API_KEY not found in environment variables.")
+
+    def call_anthropic_api(self, messages, system_prompt):
+        headers = {
+            "content-type": "application/json",
+            "x-api-key": self.api_key,
+            "anthropic-version": "2023-06-01"
+        }
+        data = {
+            "model": "claude-3-5-sonnet-20240620",
+            "max_tokens": 150,
+            "messages": messages,
+            "system": system_prompt
+        }
+        response = requests.post("https://api.anthropic.com/v1/messages", headers=headers, json=data)
+        if response.status_code != 200:
+            raise Exception(f"API request failed with status {response.status_code}: {response.text}")
+        return response.json()
+
+# File: utils/chatbot_type_factory.py
+
+# File: utils/chatbot_type_factory.py
+
+from typing import Dict, Type, Optional
+from chatbot_types.base import BaseChatbot
+
+class ChatbotFactory:
+    def __init__(self):
+        self.chatbot_types: Dict[str, Type[BaseChatbot]] = {}
+
+    def register(self, chatbot_class: Type[BaseChatbot]):
+        self.chatbot_types[chatbot_class.__name__.lower()] = chatbot_class
+
+    def get(self, chatbot_type: str) -> Optional[Type[BaseChatbot]]:
+        if chatbot_type is None:
+            print("Warning: Attempted to get a chatbot type with None value")
+            return None
+        chatbot_class = self.chatbot_types.get(chatbot_type.lower())
+        if chatbot_class is None:
+            print(f"Warning: Unknown chatbot type '{chatbot_type}'")
+        return chatbot_class
+
+    def create(self, chatbot_type: str, name: str, **kwargs) -> Optional[BaseChatbot]:
+        chatbot_class = self.get(chatbot_type)
+        if chatbot_class:
+            return chatbot_class(name, **kwargs)
+        return None
+
+chatbot_factory = ChatbotFactory()
+
+# Register chatbot types
+from chatbot_types.text_chatbot import TextChatbot
+from chatbot_types.claude.claude_chatbot import ClaudeChatbot
+
+chatbot_factory.register(TextChatbot)
+chatbot_factory.register(ClaudeChatbot)
+
+# File: models/thread.py
+
+
+from uuid import uuid4
+from datetime import datetime
+from typing import Dict
+
+class Thread:
+    def __init__(self, chatbot_id: str, id: str = None, 
+                 created_at: datetime = None, metadata: Dict = None, 
+                 visible: bool = True):
+        self.id = id or str(uuid4())
+        self.chatbot_id = chatbot_id
+        self.created_at = created_at or datetime.utcnow()
+        self.metadata = metadata or {}
+        self.visible = visible
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "chatbot_id": self.chatbot_id,
+            "created_at": self.created_at.isoformat(),
+            "metadata": self.metadata,
+            "visible": self.visible
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(
+            data["chatbot_id"],
+            id=data["id"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            metadata=data.get("metadata"),
+            visible=data.get("visible", True)
+        )
+
+
+# File: models/__init__.py
+
+
+
+# File: models/message.py
+
+
+from uuid import uuid4
+from datetime import datetime
+from typing import List, Dict
+
+class Content:
+    def __init__(self, type: str, content: str, metadata: Dict = None):
+        self.type = type
+        self.content = content
+        self.metadata = metadata or {}
+
+    def to_dict(self):
+        return {
+            "type": self.type,
+            "content": self.content,
+            "metadata": self.metadata
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        return cls(data["type"], data["content"], data.get("metadata"))
+
+class Message:
+    def __init__(self, thread_id: str, role: str, contents: List[Content], 
+                 id: str = None, created_at: datetime = None, 
+                 metadata: Dict = None, visible: bool = True):
+        self.id = id or str(uuid4())
+        self.thread_id = thread_id
+        self.role = role
+        self.contents = contents
+        self.created_at = created_at or datetime.utcnow()
+        self.metadata = metadata or {}
+        self.visible = visible
+
+    def to_dict(self):
+        return {
+            "id": self.id,
+            "thread_id": self.thread_id,
+            "role": self.role,
+            "contents": [c.to_dict() for c in self.contents],
+            "created_at": self.created_at.isoformat(),
+            "metadata": self.metadata,
+            "visible": self.visible
+        }
+
+    @classmethod
+    def from_dict(cls, data):
+        contents = [Content.from_dict(c) for c in data["contents"]]
+        return cls(
+            data["thread_id"],
+            data["role"],
+            contents,
+            id=data["id"],
+            created_at=datetime.fromisoformat(data["created_at"]),
+            metadata=data.get("metadata"),
+            visible=data.get("visible", True)
+        )
+
+
+# File: models/settings.py
+
+# File: models/settings.py
+
+from typing import Any, Dict, Optional
+
+class Settings:
+    def __init__(self, general: Dict[str, Any] = None, type_specific: Dict[str, Any] = None):
+        self._general = general or {}
+        self._type_specific = type_specific or {}
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._type_specific.get(key) or self._general.get(key) or default
+
+    def set_general(self, key: str, value: Any):
+        self._general[key] = value
+
+    def set_type_specific(self, key: str, value: Any):
+        self._type_specific[key] = value
+
+    def update(self, general: Optional[Dict[str, Any]] = None, type_specific: Optional[Dict[str, Any]] = None):
+        if general:
+            self._general.update(general)
+        if type_specific:
+            self._type_specific.update(type_specific)
+
+    def to_dict(self) -> Dict[str, Dict[str, Any]]:
+        return {
+            "general": self._general,
+            "type_specific": self._type_specific
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Dict[str, Any]]) -> 'Settings':
+        return cls(general=data.get("general", {}), type_specific=data.get("type_specific", {}))
+
+    @property
+    def general(self) -> Dict[str, Any]:
+        return self._general
+
+    @property
+    type_specific(self) -> Dict[str, Any]:
+        return self._type_specific
+
+# File: models/chatbot.py
+
+from uuid import uuid4
+from datetime import datetime
+from typing import Optional, Dict, Any
+from .settings import Settings
+
+class Chatbot:
+    def __init__(self, name: str, chatbot_type_id: str, 
+                 general_settings: Dict[str, Any] = None, 
+                 type_specific_settings: Dict[str, Any] = None,
+                 id: Optional[str] = None, created_at: Optional[datetime] = None):
+        self.id = id or str(uuid4())
+        self.name = name
+        self.chatbot_type_id = chatbot_type_id
+        self.settings = Settings(general=general_settings, type_specific=type_specific_settings)
+        self.created_at = created_at or datetime.utcnow()
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": self.id,
+            "name": self.name,
+            "chatbot_type_id": self.chatbot_type_id,
+            "settings": self.settings.to_dict(),
+            "created_at": self.created_at.isoformat()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'Chatbot':
+        settings = data.get("settings", {})
+        return cls(
+            name=data["name"],
+            chatbot_type_id=data["chatbot_type_id"],
+            general_settings=settings.get("general"),
+            type_specific_settings=settings.get("type_specific"),
+            id=data["id"],
+            created_at=datetime.fromisoformat(data["created_at"])
+        )
+
+# File: storage/in_memory_storage.py
+
+# File: storage/in_memory_storage.py
+
+from typing import List, Dict, Optional
+from chatbot_types.base import BaseChatbot
+from models.message import Message
+from models.thread import Thread
+
+class InMemoryStorage:
+    def __init__(self):
+        self.chatbots: Dict[str, BaseChatbot] = {}
+        self.threads: Dict[str, Thread] = {}
+        self.messages: Dict[str, Message] = {}
+
+    def save_chatbot(self, chatbot: BaseChatbot) -> None:
+        self.chatbots[chatbot.id] = chatbot
+
+    def get_chatbot(self, chatbot_id: str) -> Optional[BaseChatbot]:
+        return self.chatbots.get(chatbot_id)
+
+    def get_chatbots(self, query: Optional[Dict] = None) -> List[BaseChatbot]:
+        if query is None:
+            return list(self.chatbots.values())
+        
+        filtered_chatbots = []
+        for chatbot in self.chatbots.values():
+            if all(getattr(chatbot, k, None) == v for k, v in query.items()):
+                filtered_chatbots.append(chatbot)
+        return filtered_chatbots
+
+    def save_thread(self, thread: Thread) -> None:
+        self.threads[thread.id] = thread
+
+    def get_thread(self, thread_id: str) -> Optional[Thread]:
+        return self.threads.get(thread_id)
+
+    def get_threads(self, query: Optional[Dict] = None) -> List[Thread]:
+        if query is None:
+            return list(self.threads.values())
+        
+        filtered_threads = []
+        for thread in self.threads.values():
+            match = True
+            for key, value in query.items():
+                if getattr(thread, key, None) != value:
+                    match = False
+                    break
+            if match:
+                filtered_threads.append(thread)
+        return filtered_threads
+
+    def save_message(self, message: Message) -> None:
+        self.messages[message.id] = message
+
+    def get_message(self, message_id: str) -> Optional[Message]:
+        return self.messages.get(message_id)
+
+    def get_messages(self, query: Optional[Dict] = None) -> List[Message]:
+        if query is None:
+            return list(self.messages.values())
+        
+        filtered_messages = []
+        for message in self.messages.values():
+            match = True
+            for key, value in query.items():
+                if getattr(message, key, None) != value:
+                    match = False
+                    break
+            if match:
+                filtered_messages.append(message)
+        return filtered_messages
+
+# File: storage/base_storage.py
+
+
+from abc import ABC, abstractmethod
+
+class BaseStorage(ABC):
+    @abstractmethod
+    def save_chatbot(self, chatbot):
+        pass
+
+    @abstractmethod
+    def get_chatbot(self, chatbot_id):
+        pass
+
+    @abstractmethod
+    def get_chatbots(self):
+        pass
+
+    @abstractmethod
+    def save_thread(self, thread):
+        pass
+
+    @abstractmethod
+    def get_thread(self, thread_id):
+        pass
+
+    @abstractmethod
+    def get_threads(self):
+        pass
+
+    @abstractmethod
+    def save_message(self, message):
+        pass
+
+    @abstractmethod
+    def get_message(self, message_id):
+        pass
+
+    @abstractmethod
+    def get_messages(self):
+        pass
+
+    @abstractmethod
+    def get_messages_for_thread(self, thread_id):
+        pass
+
+
+# File: storage/__init__.py
+
+
+
+# File: storage/json_file_storage.py
+
+# File: storage/json_file_storage.py
+
+import json
+import os
+from typing import List, Dict, Optional
+from chatbot_types.base import BaseChatbot
+from models.message import Message
+from models.thread import Thread
+from utils.chatbot_type_factory import chatbot_factory
+
+class JSONFileStorage:
+    def __init__(self, data_folder: str = 'data'):
+        self.data_folder = data_folder
+        self.ensure_data_folder_exists()
+
+    def ensure_data_folder_exists(self):
+        os.makedirs(self.data_folder, exist_ok=True)
+        for subfolder in ['chatbots', 'threads', 'messages']:
+            os.makedirs(os.path.join(self.data_folder, subfolder), exist_ok=True)
+
+    def save_chatbot(self, chatbot: BaseChatbot) -> None:
+        file_path = os.path.join(self.data_folder, 'chatbots', f"{chatbot.id}.json")
+        with open(file_path, 'w') as f:
+            json.dump(chatbot.to_dict(), f)
+
+    def get_chatbot(self, chatbot_id: str) -> Optional[BaseChatbot]:
+        file_path = os.path.join(self.data_folder, 'chatbots', f"{chatbot_id}.json")
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                data = json.load(f)
+                chatbot_type = self._infer_chatbot_type(data)
+                if chatbot_type:
+                    chatbot_class = chatbot_factory.get(chatbot_type)
+                    if chatbot_class:
+                        return chatbot_class.from_dict(data)
+                else:
+                    print(f"Warning: Unable to infer type for chatbot {chatbot_id}")
+        return None
+
+    def get_chatbots(self, query: Optional[Dict] = None) -> List[BaseChatbot]:
+        chatbots = []
+        chatbots_folder = os.path.join(self.data_folder, 'chatbots')
+        for filename in os.listdir(chatbots_folder):
+            if filename.endswith('.json'):
+                with open(os.path.join(chatbots_folder, filename), 'r') as f:
+                    data = json.load(f)
+                    chatbot_type = self._infer_chatbot_type(data)
+                    if chatbot_type:
+                        chatbot_class = chatbot_factory.get(chatbot_type)
+                        if chatbot_class:
+                            chatbot = chatbot_class.from_dict(data)
+                            if query is None or all(getattr(chatbot, k, None) == v for k, v in query.items()):
+                                chatbots.append(chatbot)
+                    else:
+                        print(f"Warning: Unable to infer type for chatbot in file {filename}")
+        return chatbots
+
+    def _infer_chatbot_type(self, data: Dict) -> Optional[str]:
+        # First, check if the type is explicitly specified
+        if 'type' in data:
+            return data['type']
+        
+        # If not, try to infer the type from the data
+        if 'settings' in data:
+            settings = data['settings']
+            if 'type_specific' in settings:
+                type_specific = settings['type_specific']
+                if 'model' in type_specific and 'claude' in type_specific['model'].lower():
+                    return 'claudechatbot'
+                # Add more inferences for other chatbot types here
+        
+        # If we can't infer the type, default to TextChatbot
+        print(f"Warning: Defaulting to TextChatbot for chatbot {data.get('id', 'unknown')}")
+        return 'textchatbot'
+
+    def delete_chatbot(self, chatbot_id: str) -> None:
+        file_path = os.path.join(self.data_folder, 'chatbots', f"{chatbot_id}.json")
+        if os.path.exists(file_path):
+            os.remove(file_path)
+
+    def save_thread(self, thread: Thread) -> None:
+        file_path = os.path.join(self.data_folder, 'threads', f"{thread.id}.json")
+        with open(file_path, 'w') as f:
+            json.dump(thread.to_dict(), f)
+
+    def get_thread(self, thread_id: str) -> Optional[Thread]:
+        file_path = os.path.join(self.data_folder, 'threads', f"{thread_id}.json")
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return Thread.from_dict(json.load(f))
+        return None
+
+    def get_threads(self, query: Optional[Dict] = None) -> List[Thread]:
+        threads = []
+        threads_folder = os.path.join(self.data_folder, 'threads')
+        for filename in os.listdir(threads_folder):
+            if filename.endswith('.json'):
+                with open(os.path.join(threads_folder, filename), 'r') as f:
+                    thread = Thread.from_dict(json.load(f))
+                    if query is None or all(getattr(thread, k) == v for k, v in query.items()):
+                        threads.append(thread)
+        return threads
+
+    def save_message(self, message: Message) -> None:
+        file_path = os.path.join(self.data_folder, 'messages', f"{message.id}.json")
+        with open(file_path, 'w') as f:
+            json.dump(message.to_dict(), f)
+
+    def get_message(self, message_id: str) -> Optional[Message]:
+        file_path = os.path.join(self.data_folder, 'messages', f"{message_id}.json")
+        if os.path.exists(file_path):
+            with open(file_path, 'r') as f:
+                return Message.from_dict(json.load(f))
+        return None
+
+    def get_messages(self, query: Optional[Dict] = None) -> List[Message]:
+        messages = []
+        messages_folder = os.path.join(self.data_folder, 'messages')
+        for filename in os.listdir(messages_folder):
+            if filename.endswith('.json'):
+                with open(os.path.join(messages_folder, filename), 'r') as f:
+                    message = Message.from_dict(json.load(f))
+                    if query is None or all(getattr(message, k) == v for k, v in query.items()):
+                        messages.append(message)
+        return messages
+
+# File: static/css/styles.css
+
+
+/* Add your CSS styles here */
+
+
+# File: static/js/main.js
+
+
+// Add your JavaScript code here
+
+
+# File: static/js/dashboard.js
+
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('create-chatbot-form');
+    form.addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        const formData = new FormData(form);
+        const chatbotData = Object.fromEntries(formData.entries());
+
+        fetch('/api/chatbot', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(chatbotData),
+        })
+        .then(response => response.json())
+        .then(data => {
+            if (data.id) {
+                alert('Chatbot created successfully!');
+                window.location.reload();  // Refresh the page to show the new chatbot
+            } else {
+                alert('Error creating chatbot: ' + data.error);
+            }
+        })
+        .catch((error) => {
+            console.error('Error:', error);
+            alert('An error occurred while creating the chatbot.');
+        });
+    });
+});
+
+# File: static/dashboard/css/dashboard.css
+
+
+/* Add your dashboard CSS styles here */
+
+
+# File: static/dashboard/js/dashboard.js
+
+
+// Add your dashboard JavaScript code here
+
+
+# File: templates/base.html
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FlexiBot{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/styles.css') }}">
+    {% block extra_css %}{% endblock %}
+</head>
+<body>
+    <header>
+        <nav>
+            <ul>
+                <li><a href="{{ url_for('dashboard') }}">Dashboard</a></li>
+                <!-- Add more navigation items as needed -->
+            </ul>
+        </nav>
+    </header>
+
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer>
+        <p>&copy; {{ year }} FlexiBot. All rights reserved.</p>
+    </footer>
+
+    <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+    {% block extra_js %}{% endblock %}
+</body>
+</html>
+
+# File: templates/dashboard.html
+
+{% extends "base.html" %}
+
+{% block title %}FlexiBot Dashboard{% endblock %}
+
+{% block content %}
+<h1>FlexiBot Dashboard</h1>
+
+<section id="chatbot-list">
+    <h2>Your Chatbots</h2>
+    <ul>
+    {% for chatbot in chatbots %}
+        <li>
+            <h3>{{ chatbot.name }}</h3>
+            <p>Type: {{ chatbot.__class__.__name__ }}</p>
+            <a href="{{ url_for('chatbot_settings', id=chatbot.id) }}">Settings</a> |
+            <a href="{{ url_for('chatbot_chat', id=chatbot.id) }}">Chat</a> |
+            <a href="{{ url_for('chatbot_logs', id=chatbot.id) }}">Chat Logs</a>
+        </li>
+    {% else %}
+        <li>No chatbots available. Create one to get started!</li>
+    {% endfor %}
+    </ul>
+</section>
+
+<section id="create-chatbot">
+    <h2>Create New Chatbot</h2>
+    <form id="create-chatbot-form">
+        <label for="chatbot-name">Name:</label>
+        <input type="text" id="chatbot-name" name="name" required>
+
+        <label for="chatbot-type">Type:</label>
+        <select id="chatbot-type" name="type" required>
+            <option value="textchatbot">Text Chatbot</option>
+            <option value="claudechatbot">Claude Chatbot</option>
+            <!-- Add more options as you implement more chatbot types -->
+        </select>
+
+        <button type="submit">Create Chatbot</button>
+    </form>
+</section>
+{% endblock %}
+
+{% block extra_js %}
+<script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+{% endblock %}
+
+# File: templates/settings.html
+
+{% extends "base.html" %}
+
+{% block title %}Chatbot Settings - {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Settings for {{ chatbot.name }}</h1>
+<p>Chatbot Type: {{ chatbot.__class__.__name__ }}</p>
+
+<div id="settings-container">
+    <h2>General Settings</h2>
+    <div id="general-settings"></div>
+
+    <h2>Type-Specific Settings</h2>
+    <div id="type-specific-settings"></div>
+</div>
+
+<button id="save-settings">Save All Settings</button>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+    const chatbotType = "{{ chatbot.__class__.__name__ }}";
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    fetchSettings();
+    document.getElementById('save-settings').addEventListener('click', saveAllSettings);
+});
+
+function fetchSettings() {
+    fetch(`/api/chatbot/${chatbotId}/settings`)
+        .then(response => response.json())
+        .then(data => {
+            displaySettings('general-settings', data.general);
+            displaySettings('type-specific-settings', data.type_specific);
+        })
+        .catch(error => console.error('Error:', error));
+}
+
+function displaySettings(containerId, settings) {
+    const container = document.getElementById(containerId);
+    container.innerHTML = '';
+    
+    for (const [key, value] of Object.entries(settings)) {
+        const div = document.createElement('div');
+        div.className = 'setting-item';
+        
+        const label = document.createElement('label');
+        label.textContent = key;
+        label.htmlFor = key;
+        
+        const input = document.createElement('input');
+        input.type = typeof value === 'number' ? 'number' : 'text';
+        input.id = key;
+        input.name = key;
+        input.value = value;
+        
+        div.appendChild(label);
+        div.appendChild(input);
+        container.appendChild(div);
+    }
+}
+
+function saveAllSettings() {
+    const generalSettings = getSettingsFromContainer('general-settings');
+    const typeSpecificSettings = getSettingsFromContainer('type-specific-settings');
+    
+    const settings = {
+        general: generalSettings,
+        type_specific: typeSpecificSettings
+    };
+    
+    fetch(`/api/chatbot/${chatbotId}/settings`, {
+        method: 'PUT',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(settings),
+    })
+    .then(response => response.json())
+    .then(data => {
+        alert('Settings saved successfully');
+        fetchSettings();  // Refresh the displayed settings
+    })
+    .catch((error) => {
+        console.error('Error:', error);
+        alert('Failed to save settings');
+    });
+}
+
+function getSettingsFromContainer(containerId) {
+    const container = document.getElementById(containerId);
+    const inputs = container.querySelectorAll('input');
+    const settings = {};
+    
+    inputs.forEach(input => {
+        let value = input.value;
+        if (input.type === 'number') {
+            value = parseFloat(value);
+        }
+        settings[input.name] = value;
+    });
+    
+    return settings;
+}
+</script>
+{% endblock %}
+
+# File: templates/chat_logs.html
+
+{% extends "base.html" %}
+
+{% block title %}Chat Logs - {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Chat Logs for {{ chatbot.name }}</h1>
+
+<div id="chat-logs-container">
+    <!-- Logs will be populated here -->
+</div>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+
+    document.addEventListener('DOMContentLoaded', function() {
+        fetchChatLogs();
+    });
+
+    function fetchChatLogs() {
+        fetch(`/api/chatbot/${chatbotId}/logs`)
+            .then(response => response.json())
+            .then(logs => {
+                logs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                const container = document.getElementById('chat-logs-container');
+                container.innerHTML = '';
+                logs.forEach((thread, index) => {
+                    thread.messages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+                    const threadElement = document.createElement('div');
+                    threadElement.className = 'chat-thread';
+                    threadElement.innerHTML = `
+                        <h3>Thread ${index + 1} - ${new Date(thread.created_at).toLocaleString()}</h3>
+                        <div class="thread-messages">
+                            ${thread.messages.map(message => `
+                                <div class="message ${message.role}-message">
+                                    <span class="message-time">${new Date(message.created_at).toLocaleTimeString()}</span>
+                                    <span class="message-content">${message.contents[0].content}</span>
+                                </div>
+                            `).join('')}
+                        </div>
+                    `;
+                    container.appendChild(threadElement);
+                });
+            })
+            .catch(error => console.error('Error:', error));
+    }
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    .chat-thread {
+        margin-bottom: 30px;
+        border: 1px solid #ccc;
+        padding: 10px;
+        border-radius: 5px;
+    }
+    .thread-messages {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+    .message {
+        margin-bottom: 10px;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .user-message {
+        background-color: #e6f2ff;
+        text-align: right;
+    }
+    .bot-message {
+        background-color: #f0f0f0;
+    }
+    .message-time {
+        font-size: 0.8em;
+        color: #888;
+    }
+    .message-content {
+        display: block;
+        margin-top: 5px;
+    }
+</style>
+{% endblock %}
+
+# File: templates/error.html
+
+
+
+# File: templates/chat.html
+
+{% extends "base.html" %}
+
+{% block title %}Chat with {{ chatbot.name }}{% endblock %}
+
+{% block content %}
+<h1>Chat with {{ chatbot.name }}</h1>
+
+<div id="chat-container">
+    <div id="chat-messages"></div>
+    <form id="chat-form">
+        <input type="text" id="user-input" placeholder="Type your message here..." required>
+        <button type="submit">Send</button>
+    </form>
+    <button id="new-thread-btn">New Thread</button>
+</div>
+
+<script>
+    const chatbotId = "{{ chatbot.id }}";
+    const chatbotType = "{{ chatbot.__class__.__name__ }}";
+    let threadId = localStorage.getItem(`threadId_${chatbotId}`);
+</script>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('chat-form');
+    form.addEventListener('submit', sendMessage);
+    
+    const newThreadBtn = document.getElementById('new-thread-btn');
+    newThreadBtn.addEventListener('click', startNewThread);
+    
+    if (!threadId) {
+        createNewThread();
+    } else {
+        loadMessages();
+    }
+});
+
+function createNewThread() {
+    fetch(`/api/chatbot/${chatbotId}/thread`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        threadId = data.id;
+        localStorage.setItem(`threadId_${chatbotId}`, threadId);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function startNewThread() {
+    const chatMessages = document.getElementById('chat-messages');
+    chatMessages.innerHTML = '';
+    createNewThread();
+}
+
+function loadMessages() {
+    fetch(`/api/chatbot/${chatbotId}/thread/${threadId}/messages`)
+    .then(response => response.json())
+    .then(messages => {
+        const chatMessages = document.getElementById('chat-messages');
+        chatMessages.innerHTML = '';
+        messages.forEach(message => {
+            displayMessage(message.role, message.contents[0].content);
+        });
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function sendMessage(e) {
+    e.preventDefault();
+    const userInput = document.getElementById('user-input');
+    const message = userInput.value;
+    userInput.value = '';
+
+    if (!threadId) {
+        alert('Thread not created yet. Please try again in a moment.');
+        return;
+    }
+
+    displayMessage('user', message);
+
+    fetch(`/api/chatbot/${chatbotId}/chat`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ thread_id: threadId, content: message }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        displayMessage('bot', data.contents[0].content);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function displayMessage(sender, message) {
+    const chatMessages = document.getElementById('chat-messages');
+    const messageElement = document.createElement('div');
+    messageElement.className = `message ${sender}-message`;
+    messageElement.textContent = message;
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
+</script>
+{% endblock %}
+
+{% block extra_css %}
+<style>
+    #chat-container {
+        max-width: 600px;
+        margin: 0 auto;
+        padding: 20px;
+        border: 1px solid #ccc;
+        border-radius: 5px;
+    }
+    #chat-messages {
+        height: 400px;
+        overflow-y: auto;
+        margin-bottom: 20px;
+        padding: 10px;
+        border: 1px solid #eee;
+    }
+    .message {
+        margin-bottom: 10px;
+        padding: 5px 10px;
+        border-radius: 5px;
+    }
+    .user-message {
+        background-color: #e6f2ff;
+        text-align: right;
+    }
+    .bot-message {
+        background-color: #f0f0f0;
+    }
+    #chat-form {
+        display: flex;
+        margin-bottom: 10px;
+    }
+    #user-input {
+        flex-grow: 1;
+        margin-right: 10px;
+    }
+    #new-thread-btn {
+        width: 100%;
+        padding: 10px;
+        background-color: #4CAF50;
+        color: white;
+        border: none;
+        border-radius: 5px;
+        cursor: pointer;
+    }
+</style>
+{% endblock %}
+
+# File: templates/dashboard/index.html
+
+
+{% extends 'base.html' %}
+
+{% block content %}
+    <h2>Dashboard</h2>
+    <p>Welcome to your dashboard!</p>
+{% endblock %}
+
+
+# File: routes/__init__.py
+
+
+
+# File: routes/api/thread.py
+
+
+from flask import Blueprint, jsonify, request
+from models.thread import Thread
+from storage.in_memory_storage import InMemoryStorage
+
+thread_bp = Blueprint('thread', __name__)
+storage = InMemoryStorage()
+
+@thread_bp.route('/', methods=['GET'])
+def get_threads():
+    threads = storage.get_threads()
+    return jsonify([thread.to_dict() for thread in threads])
+
+@thread_bp.route('/<id>', methods=['GET'])
+def get_thread(id):
+    thread = storage.get_thread(id)
+    if thread:
+        return jsonify(thread.to_dict())
+    return jsonify({"error": "Thread not found"}), 404
+
+@thread_bp.route('/', methods=['POST'])
+def create_thread():
+    data = request.json
+    chatbot_id = data.get('chatbot_id')
+    if not chatbot_id:
+        return jsonify({"error": "chatbot_id is required"}), 400
+    
+    thread = Thread(chatbot_id=chatbot_id)
+    storage.save_thread(thread)
+    return jsonify({"message": "Thread created successfully", "thread_id": thread.id}), 201
+
+@thread_bp.route('/<id>', methods=['DELETE'])
+def hide_thread(id):
+    thread = storage.get_thread(id)
+    if thread:
+        thread.visible = False
+        storage.save_thread(thread)
+        return jsonify({"message": "Thread hidden successfully"})
+    return jsonify({"error": "Thread not found"}), 404
+
+
+# File: routes/api/__init__.py
+
+
+
+# File: routes/api/message.py
+
+
+from flask import Blueprint, jsonify, request
+from models.message import Message, Content
+from models.thread import Thread
+from storage.in_memory_storage import InMemoryStorage
+from uuid import uuid4
+
+message_bp = Blueprint('message', __name__)
+storage = InMemoryStorage()
+
+@message_bp.route('/', methods=['POST'])
+def create_message():
+    data = request.json
+    thread_id = data.get('thread_id')
+    if not thread_id:
+        return jsonify({"error": "thread_id is required"}), 400
+    
+    thread = storage.get_thread(thread_id)
+    if not thread:
+        return jsonify({"error": "Thread not found"}), 404
+    
+    chatbot = storage.get_chatbot(thread.chatbot_id)
+    if not chatbot:
+        return jsonify({"error": "Chatbot not found"}), 404
+    
+    contents = [Content(type=c['type'], content=c['content']) for c in data.get('contents', [])]
+    user_message = Message(
+        thread_id=thread_id,
+        role="user",
+        contents=contents
+    )
+    storage.save_message(user_message)
+    
+    # Process the message using the appropriate chatbot
+    chatbot_response = chatbot.get_chat_response(user_message, thread)
+    storage.save_message(chatbot_response)
+    
+    return jsonify({
+        "message": "Messages processed successfully",
+        "user_message_id": user_message.id,
+        "chatbot_response_id": chatbot_response.id
+    }), 201
+
+@message_bp.route('/<id>', methods=['DELETE'])
+def hide_message(id):
+    message = storage.get_message(id)
+    if message:
+        message.visible = False
+        storage.save_message(message)
+        return jsonify({"message": "Message hidden successfully"})
+    return jsonify({"error": "Message not found"}), 404
+
+
+# File: routes/api/chat.py
+
+# File: routes/api/chat.py
+
+from flask import Blueprint, jsonify, request, current_app
+from models.message import Message, Content
+from models.thread import Thread
+
+chat_bp = Blueprint('chat', __name__)
+
+@chat_bp.route('/<chatbot_id>', methods=['POST'])
+def chat(chatbot_id):
+    data = request.json
+    thread_id = data.get('thread_id')
+    content = data.get('content')
+    
+    if not thread_id or not content:
+        return jsonify({"error": "thread_id and content are required"}), 400
+    
+    try:
+        chatbot = current_app.storage.get_chatbot(chatbot_id)
+        if not chatbot:
+            return jsonify({'error': 'Invalid chatbot ID'}), 404
+        
+        thread = current_app.storage.get_thread(thread_id)
+        if not thread:
+            # Create a new thread if it doesn't exist
+            thread = Thread(chatbot_id=chatbot_id)
+            current_app.storage.save_thread(thread)
+        
+        user_message = Message(
+            thread_id=thread.id,
+            role="user",
+            contents=[Content(type="text", content=content)]
+        )
+        current_app.storage.save_message(user_message)
+        
+        response_message = chatbot.chat(user_message, thread)
+        current_app.storage.save_message(response_message)
+        
+        return jsonify(response_message.to_dict())
+    except Exception as e:
+        current_app.logger.error(f"Error in chat processing: {str(e)}")
+        return jsonify({'error': 'An error occurred while processing the chat'}), 500
+
+@chat_bp.route('/thread/<thread_id>', methods=['GET'])
+def get_thread_messages(thread_id):
+    try:
+        thread = current_app.storage.get_thread(thread_id)
+        if not thread:
+            return jsonify({'error': 'Invalid thread ID'}), 404
+        
+        messages = current_app.storage.get_messages(query={"thread_id": thread_id})
+        return jsonify([message.to_dict() for message in messages])
+    except Exception as e:
+        current_app.logger.error(f"Error retrieving thread messages: {str(e)}")
+        return jsonify({'error': 'An error occurred while retrieving messages'}), 500
+
+# File: routes/api/chatbot.py
+
+# File: routes/api/chatbot.py
+
+from flask import Blueprint, jsonify, request, current_app
+from chatbot_types.base import BaseChatbot
+from models.thread import Thread
+from models.message import Message, Content
+from models.settings import Settings
+from utils.chatbot_type_factory import chatbot_factory
+from datetime import datetime
+
+chatbot_bp = Blueprint('chatbot', __name__)
+
+@chatbot_bp.route('/', methods=['GET'])
+def get_chatbots():
+    chatbots = current_app.storage.get_chatbots()
+    return jsonify([chatbot.to_dict() for chatbot in chatbots])
+
+@chatbot_bp.route('/<id>', methods=['GET'])
+def get_chatbot(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    return jsonify(chatbot.to_dict())
+
+@chatbot_bp.route('/', methods=['POST'])
+def create_chatbot():
+    data = request.json
+    if not data or 'name' not in data or 'type' not in data:
+        return jsonify({'error': 'Name and type are required'}), 400
+
+    chatbot_class = chatbot_factory.get(data['type'])
+    if not chatbot_class:
+        return jsonify({'error': 'Invalid chatbot type'}), 400
+
+    settings = Settings(
+        general=data.get('general_settings', {}),
+        type_specific=data.get('type_specific_settings', {})
+    )
+
+    chatbot = chatbot_class(
+        name=data['name'],
+        settings=settings,
+        created_at=datetime.fromisoformat(data['created_at']) if 'created_at' in data else None
+    )
+
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    current_app.storage.save_chatbot(chatbot)
+    return jsonify(chatbot.to_dict()), 201
+
+@chatbot_bp.route('/<id>', methods=['PUT'])
+def update_chatbot(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+
+    data = request.json
+    if 'name' in data:
+        chatbot.name = data['name']
+    if 'type' in data and data['type'] != chatbot.__class__.__name__.lower():
+        return jsonify({'error': 'Changing chatbot type is not supported'}), 400
+
+    if 'general_settings' in data:
+        chatbot.settings.update(general=data['general_settings'])
+    if 'type_specific_settings' in data:
+        chatbot.settings.update(type_specific=data['type_specific_settings'])
+
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    current_app.storage.save_chatbot(chatbot)
+    return jsonify(chatbot.to_dict())
+
+@chatbot_bp.route('/<id>', methods=['DELETE'])
+def delete_chatbot(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    
+    current_app.storage.delete_chatbot(id)
+    return '', 204
+
+@chatbot_bp.route('/<id>/settings', methods=['GET'])
+def get_settings(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    
+    return jsonify(chatbot.settings.to_dict())
+
+@chatbot_bp.route('/<id>/settings', methods=['PUT'])
+def update_settings(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    
+    data = request.json
+    general_settings = data.get('general')
+    type_specific_settings = data.get('type_specific')
+    
+    if general_settings:
+        chatbot.settings.update(general=general_settings)
+    
+    if type_specific_settings:
+        try:
+            if chatbot.validate_settings(type_specific_settings):
+                chatbot.settings.update(type_specific=type_specific_settings)
+            else:
+                return jsonify({'error': 'Invalid type-specific settings'}), 400
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+    
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    current_app.storage.save_chatbot(chatbot)
+    return jsonify(chatbot.settings.to_dict())
+
+@chatbot_bp.route('/<id>/settings/<setting_key>', methods=['GET'])
+def get_setting(id, setting_key):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    
+    value = chatbot.settings.get(setting_key)
+    if value is None:
+        return jsonify({'error': 'Setting not found'}), 404
+    
+    return jsonify({setting_key: value})
+
+@chatbot_bp.route('/<id>/settings/<setting_key>', methods=['PUT'])
+def update_setting(id, setting_key):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+    
+    value = request.json.get('value')
+    if value is None:
+        return jsonify({'error': 'Value is required'}), 400
+    
+    if setting_key in chatbot.get_default_settings():
+        try:
+            if chatbot.validate_settings({setting_key: value}):
+                chatbot.settings.set_type_specific(setting_key, value)
+            else:
+                return jsonify({'error': 'Invalid setting value'}), 400
+        except ValueError as e:
+            return jsonify({'error': str(e)}), 400
+    else:
+        chatbot.settings.set_general(setting_key, value)
+    
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+    current_app.storage.save_chatbot(chatbot)
+    return jsonify({setting_key: value})
+
+@chatbot_bp.route('/<id>/thread', methods=['POST'])
+def create_thread(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+
+    thread = Thread(chatbot_id=id)
+    current_app.storage.save_thread(thread)
+
+    return jsonify(thread.to_dict()), 201
+
+@chatbot_bp.route('/<id>/thread/<thread_id>/messages', methods=['GET'])
+def get_thread_messages(id, thread_id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+
+    thread = current_app.storage.get_thread(thread_id)
+    if not thread or thread.chatbot_id != id:
+        return jsonify({'error': 'Thread not found'}), 404
+
+    messages = current_app.storage.get_messages(query={"thread_id": thread_id})
+    return jsonify([message.to_dict() for message in messages])
+
+@chatbot_bp.route('/<id>/chat', methods=['POST'])
+def chat(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+
+    data = request.json
+    thread_id = data.get('thread_id')
+    content = data.get('content')
+
+    if not thread_id or not content:
+        return jsonify({"error": "thread_id and content are required"}), 400
+
+    thread = current_app.storage.get_thread(thread_id)
+    if not thread or thread.chatbot_id != id:
+        return jsonify({'error': 'Thread not found'}), 404
+
+    user_message = Message(
+        thread_id=thread_id,
+        role="user",
+        contents=[Content(type="text", content=content)]
+    )
+    current_app.storage.save_message(user_message)
+
+    response_message = chatbot.chat(user_message, thread)
+    current_app.storage.save_message(response_message)
+
+    return jsonify(response_message.to_dict())
+
+@chatbot_bp.route('/<id>/logs', methods=['GET'])
+def get_chat_logs(id):
+    chatbot = current_app.storage.get_chatbot(id)
+    if not chatbot:
+        return jsonify({'error': 'Chatbot not found'}), 404
+
+    threads = current_app.storage.get_threads(query={"chatbot_id": id})
+    logs = []
+    for thread in threads:
+        messages = current_app.storage.get_messages(query={"thread_id": thread.id})
+        messages.sort(key=lambda message: message.created_at)
+        logs.append({
+            'thread_id': thread.id,
+            'created_at': thread.created_at.isoformat(),
+            'messages': [message.to_dict() for message in messages]
+        })
+
+    logs.sort(key=lambda log: log['created_at'], reverse=True)
+    return jsonify(logs)

@@ -16,91 +16,96 @@
 
 <script>
     const chatbotId = "{{ chatbot.id }}";
+    const chatbotType = "{{ chatbot.__class__.__name__ }}";
     let threadId = localStorage.getItem(`threadId_${chatbotId}`);
+</script>
+{% endblock %}
 
-    document.addEventListener('DOMContentLoaded', function() {
-        const form = document.getElementById('chat-form');
-        form.addEventListener('submit', sendMessage);
-        
-        const newThreadBtn = document.getElementById('new-thread-btn');
-        newThreadBtn.addEventListener('click', startNewThread);
-        
-        if (!threadId) {
-            createNewThread();
-        } else {
-            loadMessages();
-        }
-    });
-
-    function createNewThread() {
-        fetch(`/api/chatbot/${chatbotId}/thread`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            }
-        })
-        .then(response => response.json())
-        .then(data => {
-            threadId = data.id;
-            localStorage.setItem(`threadId_${chatbotId}`, threadId);
-        })
-        .catch(error => console.error('Error:', error));
+{% block extra_js %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    const form = document.getElementById('chat-form');
+    form.addEventListener('submit', sendMessage);
+    
+    const newThreadBtn = document.getElementById('new-thread-btn');
+    newThreadBtn.addEventListener('click', startNewThread);
+    
+    if (!threadId) {
+        createNewThread();
+    } else {
+        loadMessages();
     }
+});
 
-    function startNewThread() {
+function createNewThread() {
+    fetch(`/api/chatbot/${chatbotId}/thread`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        threadId = data.id;
+        localStorage.setItem(`threadId_${chatbotId}`, threadId);
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function startNewThread() {
+    const chatMessages = document.getElementById('chat-messages');
+    chatMessages.innerHTML = '';
+    createNewThread();
+}
+
+function loadMessages() {
+    fetch(`/api/chatbot/${chatbotId}/thread/${threadId}/messages`)
+    .then(response => response.json())
+    .then(messages => {
         const chatMessages = document.getElementById('chat-messages');
         chatMessages.innerHTML = '';
-        createNewThread();
+        messages.forEach(message => {
+            displayMessage(message.role, message.contents[0].content);
+        });
+    })
+    .catch(error => console.error('Error:', error));
+}
+
+function sendMessage(e) {
+    e.preventDefault();
+    const userInput = document.getElementById('user-input');
+    const message = userInput.value;
+    userInput.value = '';
+
+    if (!threadId) {
+        alert('Thread not created yet. Please try again in a moment.');
+        return;
     }
 
-    function loadMessages() {
-        fetch(`/api/chatbot/${chatbotId}/thread/${threadId}/messages`)
-        .then(response => response.json())
-        .then(messages => {
-            const chatMessages = document.getElementById('chat-messages');
-            chatMessages.innerHTML = '';
-            messages.forEach(message => {
-                displayMessage(message.role, message.contents[0].content);
-            });
-        })
-        .catch(error => console.error('Error:', error));
-    }
+    displayMessage('user', message);
 
-    function sendMessage(e) {
-        e.preventDefault();
-        const userInput = document.getElementById('user-input');
-        const message = userInput.value;
-        userInput.value = '';
+    fetch(`/api/chatbot/${chatbotId}/chat`, {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ thread_id: threadId, content: message }),
+    })
+    .then(response => response.json())
+    .then(data => {
+        displayMessage('bot', data.contents[0].content);
+    })
+    .catch(error => console.error('Error:', error));
+}
 
-        if (!threadId) {
-            alert('Thread not created yet. Please try again in a moment.');
-            return;
-        }
-
-        displayMessage('user', message);
-
-        fetch(`/api/chatbot/${chatbotId}/chat`, {
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ thread_id: threadId, content: message }),
-        })
-        .then(response => response.json())
-        .then(data => {
-            displayMessage('bot', data.contents[0].content);
-        })
-        .catch(error => console.error('Error:', error));
-    }
-
-    function displayMessage(sender, message) {
-        const chatMessages = document.getElementById('chat-messages');
-        const messageElement = document.createElement('div');
-        messageElement.className = `message ${sender}-message`;
-        messageElement.textContent = message;
-        chatMessages.appendChild(messageElement);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
+function displayMessage(sender, message) {
+    const chatMessages = document.getElementById('chat-messages');
+    const messageElement = document.createElement('div');
+    messageElement.className = `message ${sender}-message`;
+    messageElement.textContent = message;
+    chatMessages.appendChild(messageElement);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+}
 </script>
 {% endblock %}
 

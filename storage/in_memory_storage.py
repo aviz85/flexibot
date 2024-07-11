@@ -1,32 +1,29 @@
+# File: storage/in_memory_storage.py
+
 from typing import List, Dict, Optional
-from models.chatbot import Chatbot
+from chatbot_types.base import BaseChatbot
 from models.message import Message
 from models.thread import Thread
 
 class InMemoryStorage:
     def __init__(self):
-        self.chatbots: Dict[str, Chatbot] = {}
+        self.chatbots: Dict[str, BaseChatbot] = {}
         self.threads: Dict[str, Thread] = {}
         self.messages: Dict[str, Message] = {}
 
-    def save_chatbot(self, chatbot: Chatbot) -> None:
+    def save_chatbot(self, chatbot: BaseChatbot) -> None:
         self.chatbots[chatbot.id] = chatbot
 
-    def get_chatbot(self, chatbot_id: str) -> Optional[Chatbot]:
+    def get_chatbot(self, chatbot_id: str) -> Optional[BaseChatbot]:
         return self.chatbots.get(chatbot_id)
 
-    def get_chatbots(self, query: Optional[Dict] = None) -> List[Chatbot]:
+    def get_chatbots(self, query: Optional[Dict] = None) -> List[BaseChatbot]:
         if query is None:
             return list(self.chatbots.values())
         
         filtered_chatbots = []
         for chatbot in self.chatbots.values():
-            match = True
-            for key, value in query.items():
-                if getattr(chatbot, key, None) != value:
-                    match = False
-                    break
-            if match:
+            if all(getattr(chatbot, k, None) == v for k, v in query.items()):
                 filtered_chatbots.append(chatbot)
         return filtered_chatbots
 

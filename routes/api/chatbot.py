@@ -1,8 +1,11 @@
+# File: routes/api/chatbot.py
+
 from flask import Blueprint, jsonify, request, current_app
-from models.chatbot import Chatbot
+from chatbot_types.base import BaseChatbot
 from models.thread import Thread
 from models.message import Message, Content
-from utils.chatbot_type_factory import chatbot_type_factory
+from models.settings import Settings
+from utils.chatbot_type_factory import chatbot_factory
 from datetime import datetime
 
 chatbot_bp = Blueprint('chatbot', __name__)
@@ -22,22 +25,26 @@ def get_chatbot(id):
 @chatbot_bp.route('/', methods=['POST'])
 def create_chatbot():
     data = request.json
-    if not data or 'name' not in data or 'chatbot_type_id' not in data:
-        return jsonify({'error': 'Name and chatbot_type_id are required'}), 400
+    if not data or 'name' not in data or 'type' not in data:
+        return jsonify({'error': 'Name and type are required'}), 400
 
-    chatbot_type = chatbot_type_factory.get(data['chatbot_type_id'])
-    if not chatbot_type:
+    chatbot_class = chatbot_factory.get(data['type'])
+    if not chatbot_class:
         return jsonify({'error': 'Invalid chatbot type'}), 400
 
-    chatbot = Chatbot(
+    settings = Settings(
+        general=data.get('general_settings', {}),
+        type_specific=data.get('type_specific_settings', {})
+    )
+
+    chatbot = chatbot_class(
         name=data['name'],
-        chatbot_type_id=data['chatbot_type_id'],
-        general_settings=data.get('general_settings', {}),
-        type_specific_settings=data.get('type_specific_settings', {})
+        settings=settings,
+        created_at=datetime.fromisoformat(data['created_at']) if 'created_at' in data else None
     )
 
     try:
-        chatbot_type.apply_settings(chatbot)
+        chatbot.apply_settings()
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
 
@@ -53,11 +60,8 @@ def update_chatbot(id):
     data = request.json
     if 'name' in data:
         chatbot.name = data['name']
-    if 'chatbot_type_id' in data:
-        chatbot_type = chatbot_type_factory.get(data['chatbot_type_id'])
-        if not chatbot_type:
-            return jsonify({'error': 'Invalid chatbot type'}), 400
-        chatbot.chatbot_type_id = data['chatbot_type_id']
+    if 'type' in data and data['type'] != chatbot.__class__.__name__.lower():
+        return jsonify({'error': 'Changing chatbot type is not supported'}), 400
 
     if 'general_settings' in data:
         chatbot.settings.update(general=data['general_settings'])
@@ -65,8 +69,7 @@ def update_chatbot(id):
         chatbot.settings.update(type_specific=data['type_specific_settings'])
 
     try:
-        chatbot_type = chatbot_type_factory.get(chatbot.chatbot_type_id)
-        chatbot_type.apply_settings(chatbot)
+        chatbot.apply_settings()
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
 
@@ -104,15 +107,19 @@ def update_settings(id):
         chatbot.settings.update(general=general_settings)
     
     if type_specific_settings:
-        chatbot_type = chatbot_type_factory.get(chatbot.chatbot_type_id)
         try:
-            if chatbot_type.validate_settings(type_specific_settings):
+            if chatbot.validate_settings(type_specific_settings):
                 chatbot.settings.update(type_specific=type_specific_settings)
             else:
                 return jsonify({'error': 'Invalid type-specific settings'}), 400
         except ValueError as e:
             return jsonify({'error': str(e)}), 400
     
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
     current_app.storage.save_chatbot(chatbot)
     return jsonify(chatbot.settings.to_dict())
 
@@ -138,10 +145,9 @@ def update_setting(id, setting_key):
     if value is None:
         return jsonify({'error': 'Value is required'}), 400
     
-    chatbot_type = chatbot_type_factory.get(chatbot.chatbot_type_id)
-    if setting_key in chatbot_type.get_default_settings():
+    if setting_key in chatbot.get_default_settings():
         try:
-            if chatbot_type.validate_settings({setting_key: value}):
+            if chatbot.validate_settings({setting_key: value}):
                 chatbot.settings.set_type_specific(setting_key, value)
             else:
                 return jsonify({'error': 'Invalid setting value'}), 400
@@ -150,6 +156,11 @@ def update_setting(id, setting_key):
     else:
         chatbot.settings.set_general(setting_key, value)
     
+    try:
+        chatbot.apply_settings()
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
     current_app.storage.save_chatbot(chatbot)
     return jsonify({setting_key: value})
 
@@ -201,11 +212,7 @@ def chat(id):
     )
     current_app.storage.save_message(user_message)
 
-    chatbot_type = chatbot_type_factory.get(chatbot.chatbot_type_id)
-    if not chatbot_type:
-        return jsonify({'error': 'Invalid chatbot type'}), 400
-
-    response_message = chatbot_type.chat(chatbot, user_message, thread)
+    response_message = chatbot.chat(user_message, thread)
     current_app.storage.save_message(response_message)
 
     return jsonify(response_message.to_dict())
@@ -220,10 +227,12 @@ def get_chat_logs(id):
     logs = []
     for thread in threads:
         messages = current_app.storage.get_messages(query={"thread_id": thread.id})
+        messages.sort(key=lambda message: message.created_at)
         logs.append({
             'thread_id': thread.id,
             'created_at': thread.created_at.isoformat(),
             'messages': [message.to_dict() for message in messages]
         })
 
+    logs.sort(key=lambda log: log['created_at'], reverse=True)
     return jsonify(logs)

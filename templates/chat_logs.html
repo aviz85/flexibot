@@ -20,9 +20,11 @@
         fetch(`/api/chatbot/${chatbotId}/logs`)
             .then(response => response.json())
             .then(logs => {
+                logs.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
                 const container = document.getElementById('chat-logs-container');
                 container.innerHTML = '';
                 logs.forEach((thread, index) => {
+                    thread.messages.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
                     const threadElement = document.createElement('div');
                     threadElement.className = 'chat-thread';
                     threadElement.innerHTML = `

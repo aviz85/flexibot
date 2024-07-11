@@ -1,17 +1,17 @@
-from .base import ChatbotType
-from models.chatbot import Chatbot
+# File: chatbot_types/text_chatbot.py
+
+from .base import BaseChatbot
 from models.message import Message, Content
 from models.thread import Thread
 from typing import Dict, Any
 
-class TextChatbotType(ChatbotType):
-    def __init__(self):
-        super().__init__("text", "Text Chatbot")
+class TextChatbot(BaseChatbot):
+    def __init__(self, name: str, **kwargs):
+        super().__init__(name, **kwargs)
 
-    def chat(self, chatbot: Chatbot, message: Message, thread: Thread) -> Message:
-        # In a real implementation, this might involve more complex logic or external API calls
+    def chat(self, message: Message, thread: Thread) -> Message:
+        # Simple echo implementation
         response_text = f"Echo: {message.contents[0].content}"
-        
         return Message(
             thread_id=thread.id,
             role="assistant",
