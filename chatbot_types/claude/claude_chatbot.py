@@ -24,15 +24,15 @@ class ClaudeChatbot(ConversationalChatbot):
     def process_conversation(self, input_text: str, conversation_history: List[Dict[str, str]]) -> str:
         messages = conversation_history + [{"role": "user", "content": input_text}]
 
-        response = self.anthropic_client.create_message(
-            model=self.settings.get("model", "claude-3-sonnet-20240229"),
-            max_tokens=self.settings.get("max_tokens", 1000),
+        api_response = self.anthropic_client.call_anthropic_api(
             messages=messages,
-            system=self.settings.get("system_prompt")
+            system_prompt=self.settings.get("system_prompt")
         )
-
-        return response.content[0].text
-
+        # Extract the response text from the API response
+        response_text = api_response['content'][0]['text']
+        
+        return response_text
+        
     def _get_conversation_history(self, thread: Thread) -> List[Dict[str, str]]:
         # This method should be implemented to retrieve and format the conversation history
         # from the storage based on the thread

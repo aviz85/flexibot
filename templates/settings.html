@@ -9,16 +9,21 @@
 <div id="settings-container">
     <h2>General Settings</h2>
     <div id="general-settings"></div>
-
     <h2>Type-Specific Settings</h2>
     <div id="type-specific-settings"></div>
 </div>
 
 <button id="save-settings">Save All Settings</button>
+<div id="status-message"></div>
+
+<h3>Debug Information</h3>
+<pre id="debug-output"></pre>
 
 <script>
     const chatbotId = "{{ chatbot.id }}";
     const chatbotType = "{{ chatbot.__class__.__name__ }}";
+    const settingsUrl = "{{ url_for('chatbot.get_settings', id=chatbot.id) }}";
+    const updateSettingsUrl = "{{ url_for('chatbot.update_settings', id=chatbot.id) }}";
 </script>
 {% endblock %}
 
@@ -30,18 +35,33 @@ document.addEventListener('DOMContentLoaded', function() {
 });
 
 function fetchSettings() {
-    fetch(`/api/chatbot/${chatbotId}/settings`)
-        .then(response => response.json())
+    fetch(settingsUrl)
+        .then(response => {
+            if (!response.ok) {
+                throw new Error('Failed to fetch settings');
+            }
+            return response.json();
+        })
         .then(data => {
+            console.log('Received settings:', data);  // Debug log
+            document.getElementById('debug-output').textContent = JSON.stringify(data, null, 2);  // Display raw data
             displaySettings('general-settings', data.general);
             displaySettings('type-specific-settings', data.type_specific);
         })
-        .catch(error => console.error('Error:', error));
+        .catch(error => {
+            console.error('Error:', error);
+            showStatusMessage('Failed to load settings: ' + error.message, 'error');
+        });
 }
 
 function displaySettings(containerId, settings) {
     const container = document.getElementById(containerId);
     container.innerHTML = '';
+    
+    if (!settings || Object.keys(settings).length === 0) {
+        container.textContent = 'No settings available.';
+        return;
+    }
     
     for (const [key, value] of Object.entries(settings)) {
         const div = document.createElement('div');
@@ -72,21 +92,26 @@ function saveAllSettings() {
         type_specific: typeSpecificSettings
     };
     
-    fetch(`/api/chatbot/${chatbotId}/settings`, {
+    fetch(updateSettingsUrl, {
         method: 'PUT',
         headers: {
             'Content-Type': 'application/json',
         },
         body: JSON.stringify(settings),
     })
-    .then(response => response.json())
+    .then(response => {
+        if (!response.ok) {
+            throw new Error('Failed to save settings');
+        }
+        return response.json();
+    })
     .then(data => {
-        alert('Settings saved successfully');
+        showStatusMessage('Settings saved successfully', 'success');
         fetchSettings();  // Refresh the displayed settings
     })
     .catch((error) => {
         console.error('Error:', error);
-        alert('Failed to save settings');
+        showStatusMessage('Failed to save settings: ' + error.message, 'error');
     });
 }
 
@@ -104,6 +129,16 @@ function getSettingsFromContainer(containerId) {
     });
     
     return settings;
+}
+
+function showStatusMessage(message, type) {
+    const statusDiv = document.getElementById('status-message');
+    statusDiv.textContent = message;
+    statusDiv.className = type;
+    setTimeout(() => {
+        statusDiv.textContent = '';
+        statusDiv.className = '';
+    }, 5000);  // Message will disappear after 5 seconds
 }
 </script>
 {% endblock %}
